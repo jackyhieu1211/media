@@ -288,6 +288,11 @@ public class DefaultMediaNotificationProvider implements MediaNotification.Provi
 
   // MediaNotification.Provider implementation
 
+  public NotificationCompat.Builder getNotificationBuilder(String channelId) {
+    return new NotificationCompat.Builder(context, channelId);
+  }
+
+
   @Override
   public final MediaNotification createNotification(
       MediaSession mediaSession,
@@ -297,7 +302,7 @@ public class DefaultMediaNotificationProvider implements MediaNotification.Provi
     ensureNotificationChannel();
 
     Player player = mediaSession.getPlayer();
-    NotificationCompat.Builder builder = new NotificationCompat.Builder(context, channelId);
+    NotificationCompat.Builder builder = getNotificationBuilder(channelId);
     int notificationId = notificationIdProvider.getNotificationId(mediaSession);
 
     MediaStyle mediaStyle = new MediaStyle();
