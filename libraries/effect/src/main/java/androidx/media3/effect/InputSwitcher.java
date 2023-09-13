@@ -23,7 +23,7 @@ import static androidx.media3.common.VideoFrameProcessor.INPUT_TYPE_TEXTURE_ID;
 import static androidx.media3.common.util.Assertions.checkNotNull;
 import static androidx.media3.common.util.Assertions.checkState;
 import static androidx.media3.common.util.Assertions.checkStateNotNull;
-import static androidx.media3.common.util.Util.containsKey;
+import static androidx.media3.common.util.Util.contains;
 
 import android.content.Context;
 import android.util.SparseArray;
@@ -32,9 +32,11 @@ import androidx.media3.common.ColorInfo;
 import androidx.media3.common.FrameInfo;
 import androidx.media3.common.GlObjectsProvider;
 import androidx.media3.common.GlTextureInfo;
+import androidx.media3.common.OnInputFrameProcessedListener;
 import androidx.media3.common.VideoFrameProcessingException;
 import androidx.media3.common.VideoFrameProcessor;
 import com.google.common.collect.ImmutableList;
+import java.util.concurrent.Executor;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
 /**
@@ -46,6 +48,8 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
   private final ColorInfo outputColorInfo;
   private final GlObjectsProvider glObjectsProvider;
   private final VideoFrameProcessingTaskExecutor videoFrameProcessingTaskExecutor;
+  private final GlShaderProgram.ErrorListener samplingShaderProgramErrorListener;
+  private final Executor errorListenerExecutor;
   private final SparseArray<Input> inputs;
   private final boolean enableColorTransfers;
 
@@ -57,11 +61,15 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
       ColorInfo outputColorInfo,
       GlObjectsProvider glObjectsProvider,
       VideoFrameProcessingTaskExecutor videoFrameProcessingTaskExecutor,
+      Executor errorListenerExecutor,
+      GlShaderProgram.ErrorListener samplingShaderProgramErrorListener,
       boolean enableColorTransfers) {
     this.context = context;
     this.outputColorInfo = outputColorInfo;
     this.glObjectsProvider = glObjectsProvider;
     this.videoFrameProcessingTaskExecutor = videoFrameProcessingTaskExecutor;
+    this.errorListenerExecutor = errorListenerExecutor;
+    this.samplingShaderProgramErrorListener = samplingShaderProgramErrorListener;
     this.inputs = new SparseArray<>();
     this.enableColorTransfers = enableColorTransfers;
   }
@@ -98,6 +106,8 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
                 inputColorInfo,
                 outputColorInfo,
                 enableColorTransfers);
+        samplingShaderProgram.setErrorListener(
+            errorListenerExecutor, samplingShaderProgramErrorListener);
         textureManager =
             new ExternalTextureManager(
                 glObjectsProvider, samplingShaderProgram, videoFrameProcessingTaskExecutor);
@@ -113,6 +123,8 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
                 outputColorInfo,
                 enableColorTransfers,
                 inputType);
+        samplingShaderProgram.setErrorListener(
+            errorListenerExecutor, samplingShaderProgramErrorListener);
         textureManager =
             new BitmapTextureManager(
                 glObjectsProvider, samplingShaderProgram, videoFrameProcessingTaskExecutor);
@@ -128,6 +140,8 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
                 outputColorInfo,
                 enableColorTransfers,
                 inputType);
+        samplingShaderProgram.setErrorListener(
+            errorListenerExecutor, samplingShaderProgramErrorListener);
         textureManager =
             new TexIdTextureManager(
                 glObjectsProvider, samplingShaderProgram, videoFrameProcessingTaskExecutor);
@@ -155,7 +169,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
   public void switchToInput(
       @VideoFrameProcessor.InputType int newInputType, FrameInfo inputFrameInfo) {
     checkStateNotNull(downstreamShaderProgram);
-    checkState(containsKey(inputs, newInputType), "Input type not registered: " + newInputType);
+    checkState(contains(inputs, newInputType), "Input type not registered: " + newInputType);
 
     for (int i = 0; i < inputs.size(); i++) {
       @VideoFrameProcessor.InputType int inputType = inputs.keyAt(i);
@@ -177,20 +191,26 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
     checkNotNull(activeTextureManager).setInputFrameInfo(inputFrameInfo);
   }
 
+  /** Returns whether the {@code InputSwitcher} is connected to an active input. */
+  public boolean hasActiveInput() {
+    return activeTextureManager != null;
+  }
+
   /**
    * Returns the {@link TextureManager} that is currently being used.
    *
-   * <p>Must call {@link #switchToInput} before calling this method.
+   * @throws IllegalStateException If the {@code InputSwitcher} is not connected to an {@linkplain
+   *     #hasActiveInput() input}.
    */
   public TextureManager activeTextureManager() {
-    return checkNotNull(activeTextureManager);
+    return checkStateNotNull(activeTextureManager);
   }
 
   /**
    * Invokes {@link TextureManager#signalEndOfCurrentInputStream} on the active {@link
    * TextureManager}.
    */
-  public void signalEndOfCurrentInputStream() {
+  public void signalEndOfInputStream() {
     checkNotNull(activeTextureManager).signalEndOfCurrentInputStream();
   }
 
@@ -203,8 +223,30 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
    *     {@linkplain #registerInput registered}.
    */
   public Surface getInputSurface() {
-    checkState(containsKey(inputs, INPUT_TYPE_SURFACE));
+    checkState(contains(inputs, INPUT_TYPE_SURFACE));
     return inputs.get(INPUT_TYPE_SURFACE).textureManager.getInputSurface();
+  }
+
+  /**
+   * See {@link DefaultVideoFrameProcessor#setInputDefaultBufferSize}.
+   *
+   * @throws IllegalStateException If {@link VideoFrameProcessor#INPUT_TYPE_SURFACE} is not
+   *     {@linkplain #registerInput registered}.
+   */
+  public void setInputDefaultBufferSize(int width, int height) {
+    checkState(contains(inputs, INPUT_TYPE_SURFACE));
+    inputs.get(INPUT_TYPE_SURFACE).textureManager.setDefaultBufferSize(width, height);
+  }
+
+  /**
+   * Sets the {@link OnInputFrameProcessedListener}.
+   *
+   * @throws IllegalStateException If {@link VideoFrameProcessor#INPUT_TYPE_TEXTURE_ID} is not
+   *     {@linkplain #registerInput registered}.
+   */
+  public void setOnInputFrameProcessedListener(OnInputFrameProcessedListener listener) {
+    checkState(contains(inputs, INPUT_TYPE_TEXTURE_ID));
+    inputs.get(INPUT_TYPE_TEXTURE_ID).textureManager.setOnInputFrameProcessedListener(listener);
   }
 
   /** Releases the resources. */

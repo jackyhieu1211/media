@@ -53,7 +53,6 @@ import static androidx.media3.test.session.common.MediaBrowserConstants.SUBSCRIB
 import static androidx.media3.test.session.common.MediaBrowserConstants.SUBSCRIBE_ID_NOTIFY_CHILDREN_CHANGED_TO_ONE;
 import static androidx.media3.test.session.common.MediaBrowserConstants.SUBSCRIBE_ID_NOTIFY_CHILDREN_CHANGED_TO_ONE_WITH_NON_SUBSCRIBED_ID;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
-import static org.junit.Assert.fail;
 
 import android.app.PendingIntent;
 import android.app.Service;
@@ -156,16 +155,19 @@ public class MockMediaLibraryService extends MediaLibraryService {
       return (MediaLibrarySession) onGetSessionHandler.onGetSession(controllerInfo);
     }
 
-    MockPlayer player = new MockPlayer.Builder().setApplicationLooper(handler.getLooper()).build();
+    if (session == null) {
+      MockPlayer player =
+          new MockPlayer.Builder().setApplicationLooper(handler.getLooper()).build();
 
-    MediaLibrarySession.Callback callback = registry.getSessionCallback();
-    session =
-        new MediaLibrarySession.Builder(
-                MockMediaLibraryService.this,
-                player,
-                callback != null ? callback : new TestLibrarySessionCallback())
-            .setId(ID)
-            .build();
+      MediaLibrarySession.Callback callback = registry.getSessionCallback();
+      session =
+          new MediaLibrarySession.Builder(
+                  MockMediaLibraryService.this,
+                  player,
+                  callback != null ? callback : new TestLibrarySessionCallback())
+              .setId(ID)
+              .build();
+    }
     return session;
   }
 
@@ -523,7 +525,7 @@ public class MockMediaLibraryService extends MediaLibraryService {
       testArtworkData =
           TestUtils.getByteArrayForScaledBitmap(getApplicationContext(), TEST_IMAGE_PATH);
     } catch (IOException e) {
-      fail(e.getMessage());
+      throw new IllegalStateException(e);
     }
     return testArtworkData;
   }

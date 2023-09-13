@@ -618,9 +618,19 @@ import java.util.concurrent.atomic.AtomicBoolean;
           e = e.copyWithMediaPeriodId(readingPeriod.info.id);
         }
       }
-      if (e.isRecoverable && pendingRecoverableRendererError == null) {
+      if (e.isRecoverable
+          && (pendingRecoverableRendererError == null
+              || e.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_OFFLOAD_WRITE_FAILED)) {
+        // If pendingRecoverableRendererError != null and error was
+        // ERROR_CODE_AUDIO_TRACK_OFFLOAD_WRITE_FAILED then upon retry, renderer will attempt with
+        // offload disabled.
         Log.w(TAG, "Recoverable renderer error", e);
-        pendingRecoverableRendererError = e;
+        if (pendingRecoverableRendererError != null) {
+          pendingRecoverableRendererError.addSuppressed(e);
+          e = pendingRecoverableRendererError;
+        } else {
+          pendingRecoverableRendererError = e;
+        }
         // Given that the player is now in an unhandled exception state, the error needs to be
         // recovered or the player stopped before any other message is handled.
         handler.sendMessageAtFrontOfQueue(
@@ -1949,6 +1959,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
             /* releaseMediaSourceList= */ false,
             /* resetError= */ true);
       }
+      for (Renderer renderer : renderers) {
+        renderer.setTimeline(timeline);
+      }
       if (!periodPositionChanged) {
         // We can keep the current playing period. Update the rest of the queued periods.
         if (!queue.updateQueuedPeriods(
@@ -2246,7 +2259,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
             formats,
             readingPeriodHolder.sampleStreams[i],
             readingPeriodHolder.getStartPositionRendererTime(),
-            readingPeriodHolder.getRendererOffset());
+            readingPeriodHolder.getRendererOffset(),
+            readingPeriodHolder.info.id);
       } else if (renderer.isEnded()) {
         // The renderer has finished playback, so we can disable it now.
         disableRenderer(renderer);
@@ -2624,7 +2638,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
         joining,
         mayRenderStartOfStream,
         startPositionUs,
-        periodHolder.getRendererOffset());
+        periodHolder.getRendererOffset(),
+        periodHolder.info.id);
     renderer.handleMessage(
         Renderer.MSG_SET_WAKEUP_LISTENER,
         new Renderer.WakeupListener() {

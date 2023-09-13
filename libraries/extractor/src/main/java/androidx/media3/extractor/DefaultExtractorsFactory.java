@@ -17,6 +17,8 @@ package androidx.media3.extractor;
 
 import static androidx.media3.common.FileTypes.inferFileTypeFromResponseHeaders;
 import static androidx.media3.common.FileTypes.inferFileTypeFromUri;
+import static androidx.media3.extractor.mp4.Mp4Extractor.FLAG_READ_MOTION_PHOTO_METADATA;
+import static androidx.media3.extractor.mp4.Mp4Extractor.FLAG_READ_SEF_DATA;
 
 import android.net.Uri;
 import androidx.annotation.GuardedBy;
@@ -30,8 +32,10 @@ import androidx.media3.common.util.TimestampAdjuster;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.extractor.amr.AmrExtractor;
 import androidx.media3.extractor.avi.AviExtractor;
+import androidx.media3.extractor.bmp.BmpExtractor;
 import androidx.media3.extractor.flac.FlacExtractor;
 import androidx.media3.extractor.flv.FlvExtractor;
+import androidx.media3.extractor.heif.HeifExtractor;
 import androidx.media3.extractor.jpeg.JpegExtractor;
 import androidx.media3.extractor.mkv.MatroskaExtractor;
 import androidx.media3.extractor.mp3.Mp3Extractor;
@@ -50,6 +54,7 @@ import androidx.media3.extractor.ts.PsExtractor;
 import androidx.media3.extractor.ts.TsExtractor;
 import androidx.media3.extractor.ts.TsPayloadReader;
 import androidx.media3.extractor.wav.WavExtractor;
+import androidx.media3.extractor.webp.WebpExtractor;
 import com.google.common.collect.ImmutableList;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.lang.reflect.Constructor;
@@ -87,6 +92,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *       </ul>
  *   <li>JPEG ({@link JpegExtractor})
  *   <li>PNG ({@link PngExtractor})
+ *   <li>WEBP ({@link WebpExtractor})
+ *   <li>BMP ({@link BmpExtractor})
+ *   <li>HEIF ({@link HeifExtractor})
  *   <li>MIDI, if available, the MIDI extension's {@code androidx.media3.decoder.midi.MidiExtractor}
  *       is used.
  * </ul>
@@ -119,6 +127,9 @@ public final class DefaultExtractorsFactory implements ExtractorsFactory {
         FileTypes.MIDI,
         FileTypes.JPEG,
         FileTypes.PNG,
+        FileTypes.WEBP,
+        FileTypes.BMP,
+        FileTypes.HEIF
       };
 
   private static final ExtensionLoader FLAC_EXTENSION_LOADER =
@@ -142,6 +153,7 @@ public final class DefaultExtractorsFactory implements ExtractorsFactory {
   private int tsTimestampSearchBytes;
   private boolean textTrackTranscodingEnabled;
   private SubtitleParser.Factory subtitleParserFactory;
+  private @JpegExtractor.Flags int jpegFlags;
 
   public DefaultExtractorsFactory() {
     tsMode = TsExtractor.MODE_SINGLE_PMT;
@@ -380,6 +392,20 @@ public final class DefaultExtractorsFactory implements ExtractorsFactory {
     return this;
   }
 
+  /**
+   * Sets flags for {@link JpegExtractor} instances created by the factory.
+   *
+   * @see JpegExtractor#JpegExtractor(int)
+   * @param flags The flags to use.
+   * @return The factory, for convenience.
+   */
+  @CanIgnoreReturnValue
+  public synchronized DefaultExtractorsFactory setJpegExtractorFlags(
+      @JpegExtractor.Flags int flags) {
+    this.jpegFlags = flags;
+    return this;
+  }
+
   @Override
   public synchronized Extractor[] createExtractors() {
     return createExtractors(Uri.EMPTY, new HashMap<>());
@@ -498,7 +524,7 @@ public final class DefaultExtractorsFactory implements ExtractorsFactory {
         extractors.add(new WavExtractor());
         break;
       case FileTypes.JPEG:
-        extractors.add(new JpegExtractor());
+        extractors.add(new JpegExtractor(jpegFlags));
         break;
       case FileTypes.MIDI:
         @Nullable Extractor midiExtractor = MIDI_EXTENSION_LOADER.getExtractor();
@@ -511,6 +537,18 @@ public final class DefaultExtractorsFactory implements ExtractorsFactory {
         break;
       case FileTypes.PNG:
         extractors.add(new PngExtractor());
+        break;
+      case FileTypes.WEBP:
+        extractors.add(new WebpExtractor());
+        break;
+      case FileTypes.BMP:
+        extractors.add(new BmpExtractor());
+        break;
+      case FileTypes.HEIF:
+        if ((mp4Flags & FLAG_READ_MOTION_PHOTO_METADATA) == 0
+            && (mp4Flags & FLAG_READ_SEF_DATA) == 0) {
+          extractors.add(new HeifExtractor());
+        }
         break;
       case FileTypes.WEBVTT:
       case FileTypes.UNKNOWN:

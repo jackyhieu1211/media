@@ -16,83 +16,85 @@
 
 package androidx.media3.transformer;
 
-import static androidx.media3.common.VideoFrameProcessor.INPUT_TYPE_BITMAP;
-import static androidx.media3.common.VideoFrameProcessor.INPUT_TYPE_SURFACE;
-import static androidx.media3.common.VideoFrameProcessor.INPUT_TYPE_TEXTURE_ID;
 import static androidx.media3.common.util.Assertions.checkNotNull;
+import static androidx.media3.common.util.Assertions.checkStateNotNull;
 
 import android.content.Context;
-import android.graphics.Bitmap;
-import android.view.Surface;
 import androidx.annotation.Nullable;
 import androidx.media3.common.ColorInfo;
 import androidx.media3.common.DebugViewProvider;
 import androidx.media3.common.Effect;
-import androidx.media3.common.Format;
 import androidx.media3.common.FrameInfo;
-import androidx.media3.common.MimeTypes;
-import androidx.media3.common.OnInputFrameProcessedListener;
-import androidx.media3.common.SurfaceInfo;
 import androidx.media3.common.VideoFrameProcessingException;
 import androidx.media3.common.VideoFrameProcessor;
 import androidx.media3.common.util.Consumer;
-import androidx.media3.common.util.Size;
 import androidx.media3.effect.Presentation;
-import com.google.common.collect.ImmutableList;
 import java.util.List;
 import java.util.concurrent.Executor;
-import java.util.concurrent.atomic.AtomicLong;
 
-/** Processes decoded video frames from one single input. */
-/* package */ final class SingleInputVideoGraph implements GraphInput {
+/** A {@link VideoGraph} that handles one input stream. */
+/* package */ final class SingleInputVideoGraph implements VideoGraph {
 
-  /**
-   * Listener for video frame processing events.
-   *
-   * <p>The methods are called from the GL thread.
-   */
-  public interface Listener {
-    /**
-     * Called when the output size changes.
-     *
-     * @param width The new output width in pixels.
-     * @param height The new output width in pixels.
-     * @return A {@link SurfaceInfo} to which {@link SingleInputVideoGraph} renders to, or {@code
-     *     null} if the output is not needed.
-     */
-    @Nullable
-    SurfaceInfo onOutputSizeChanged(int width, int height);
+  /** A factory for creating a {@link SingleInputVideoGraph}. */
+  public static final class Factory implements VideoGraph.Factory {
 
-    /** Called after the {@link SingleInputVideoGraph} has rendered its final output frame. */
-    void onEnded(long finalFramePresentationTimeUs);
+    private final VideoFrameProcessor.Factory videoFrameProcessorFactory;
+
+    public Factory(VideoFrameProcessor.Factory videoFrameProcessorFactory) {
+      this.videoFrameProcessorFactory = videoFrameProcessorFactory;
+    }
+
+    @Override
+    public VideoGraph create(
+        Context context,
+        ColorInfo inputColorInfo,
+        ColorInfo outputColorInfo,
+        Consumer<ExportException> errorConsumer,
+        DebugViewProvider debugViewProvider,
+        Listener listener,
+        Executor listenerExecutor,
+        List<Effect> compositionEffects,
+        long initialTimestampOffsetUs) {
+      @Nullable Presentation presentation = null;
+      for (int i = 0; i < compositionEffects.size(); i++) {
+        Effect effect = compositionEffects.get(i);
+        if (effect instanceof Presentation) {
+          presentation = (Presentation) effect;
+        }
+      }
+      return new SingleInputVideoGraph(
+          context,
+          videoFrameProcessorFactory,
+          inputColorInfo,
+          outputColorInfo,
+          listener,
+          errorConsumer,
+          debugViewProvider,
+          listenerExecutor,
+          /* renderFramesAutomatically= */ true,
+          presentation,
+          initialTimestampOffsetUs);
+    }
   }
 
-  private final VideoFrameProcessor videoFrameProcessor;
-  private final AtomicLong mediaItemOffsetUs;
+  private final Context context;
+  private final VideoFrameProcessor.Factory videoFrameProcessorFactory;
   private final ColorInfo inputColorInfo;
+  private final ColorInfo outputColorInfo;
+  private final Listener listener;
+  private final Consumer<ExportException> errorConsumer;
+  private final DebugViewProvider debugViewProvider;
+  private final Executor listenerExecutor;
+  private final boolean renderFramesAutomatically;
+  private final long initialTimestampOffsetUs;
+  @Nullable private final Presentation presentation;
 
-  @Nullable final Presentation presentation;
+  @Nullable private VideoFrameProcessingWrapper videoFrameProcessingWrapper;
 
+  private boolean released;
   private volatile boolean hasProducedFrameWithTimestampZero;
 
-  /**
-   * Creates a new instance.
-   *
-   * @param context A {@link Context}.
-   * @param videoFrameProcessorFactory A {@link VideoFrameProcessor.Factory}.
-   * @param inputColorInfo The {@link ColorInfo} for the input frames.
-   * @param outputColorInfo The {@link ColorInfo} for the output frames.
-   * @param listener A {@link Listener}.
-   * @param errorConsumer A {@link Consumer} of {@link ExportException}.
-   * @param debugViewProvider A {@link DebugViewProvider}.
-   * @param listenerExecutor An {@link Executor} on which {@link VideoFrameProcessor.Listener}
-   *     methods are called.
-   * @param renderFramesAutomatically Whether to automatically render output frames. Use {@code
-   *     false} when controlling the presentation of output frames.
-   * @param presentation A {@link Presentation} to apply to processed frames.
-   * @throws VideoFrameProcessingException When video frame processing fails.
-   */
-  public SingleInputVideoGraph(
+  private SingleInputVideoGraph(
       Context context,
       VideoFrameProcessor.Factory videoFrameProcessorFactory,
       ColorInfo inputColorInfo,
@@ -102,27 +104,51 @@ import java.util.concurrent.atomic.AtomicLong;
       DebugViewProvider debugViewProvider,
       Executor listenerExecutor,
       boolean renderFramesAutomatically,
-      @Nullable Presentation presentation)
-      throws VideoFrameProcessingException {
-    this.mediaItemOffsetUs = new AtomicLong();
+      @Nullable Presentation presentation,
+      long initialTimestampOffsetUs) {
+    this.context = context;
+    this.videoFrameProcessorFactory = videoFrameProcessorFactory;
     this.inputColorInfo = inputColorInfo;
+    this.outputColorInfo = outputColorInfo;
+    this.listener = listener;
+    this.errorConsumer = errorConsumer;
+    this.debugViewProvider = debugViewProvider;
+    this.listenerExecutor = listenerExecutor;
+    this.renderFramesAutomatically = renderFramesAutomatically;
     this.presentation = presentation;
+    this.initialTimestampOffsetUs = initialTimestampOffsetUs;
+  }
 
-    videoFrameProcessor =
-        videoFrameProcessorFactory.create(
+  /**
+   * {@inheritDoc}
+   *
+   * <p>This method must be called at most once.
+   */
+  @Override
+  public void initialize() throws VideoFrameProcessingException {
+    checkStateNotNull(videoFrameProcessingWrapper == null && !released);
+
+    videoFrameProcessingWrapper =
+        new VideoFrameProcessingWrapper(
             context,
-            debugViewProvider,
+            videoFrameProcessorFactory,
             inputColorInfo,
             outputColorInfo,
-            renderFramesAutomatically,
+            debugViewProvider,
             listenerExecutor,
             new VideoFrameProcessor.Listener() {
               private long lastProcessedFramePresentationTimeUs;
 
               @Override
+              public void onInputStreamRegistered(
+                  @VideoFrameProcessor.InputType int inputType,
+                  List<Effect> effects,
+                  FrameInfo frameInfo) {}
+
+              @Override
               public void onOutputSizeChanged(int width, int height) {
                 // TODO: b/289986435 - Allow setting output surface info on VideoGraph.
-                checkNotNull(videoFrameProcessor)
+                checkNotNull(videoFrameProcessingWrapper)
                     .setOutputSurfaceInfo(listener.onOutputSizeChanged(width, height));
               }
 
@@ -145,106 +171,33 @@ import java.util.concurrent.atomic.AtomicLong;
               public void onEnded() {
                 listener.onEnded(lastProcessedFramePresentationTimeUs);
               }
-            });
+            },
+            renderFramesAutomatically,
+            presentation,
+            initialTimestampOffsetUs);
+  }
+
+  /** Returns the {@link GraphInput}. */
+  @Override
+  public GraphInput getInput() {
+    return checkNotNull(videoFrameProcessingWrapper);
   }
 
   @Override
-  public void onMediaItemChanged(
-      EditedMediaItem editedMediaItem,
-      long durationUs,
-      @Nullable Format trackFormat,
-      boolean isLast) {
-    if (trackFormat != null) {
-      Size decodedSize = getDecodedSize(trackFormat);
-      videoFrameProcessor.registerInputStream(
-          getInputType(checkNotNull(trackFormat.sampleMimeType)),
-          createEffectListWithPresentation(editedMediaItem.effects.videoEffects, presentation),
-          new FrameInfo.Builder(decodedSize.getWidth(), decodedSize.getHeight())
-              .setPixelWidthHeightRatio(trackFormat.pixelWidthHeightRatio)
-              .setOffsetToAddUs(mediaItemOffsetUs.get())
-              .build());
-    }
-    mediaItemOffsetUs.addAndGet(durationUs);
-  }
-
-  @Override
-  public boolean queueInputBitmap(Bitmap inputBitmap, long durationUs, int frameRate) {
-    videoFrameProcessor.queueInputBitmap(inputBitmap, durationUs, frameRate);
-    return true;
-  }
-
-  @Override
-  public void setOnInputFrameProcessedListener(OnInputFrameProcessedListener listener) {
-    videoFrameProcessor.setOnInputFrameProcessedListener(listener);
-  }
-
-  @Override
-  public boolean queueInputTexture(int texId, long presentationTimeUs) {
-    videoFrameProcessor.queueInputTexture(texId, presentationTimeUs);
-    return true;
-  }
-
-  @Override
-  public Surface getInputSurface() {
-    return videoFrameProcessor.getInputSurface();
-  }
-
-  @Override
-  public ColorInfo getExpectedInputColorInfo() {
-    return inputColorInfo;
-  }
-
-  @Override
-  public int getPendingVideoFrameCount() {
-    return videoFrameProcessor.getPendingInputFrameCount();
-  }
-
-  @Override
-  public boolean registerVideoFrame(long presentationTimeUs) {
-    videoFrameProcessor.registerInputFrame();
-    return true;
-  }
-
-  @Override
-  public void signalEndOfVideoInput() {
-    videoFrameProcessor.signalEndOfInput();
-  }
-
-  /* package */ boolean hasProducedFrameWithTimestampZero() {
+  public boolean hasProducedFrameWithTimestampZero() {
     return hasProducedFrameWithTimestampZero;
   }
 
+  @Override
   public void release() {
-    videoFrameProcessor.release();
-  }
+    if (released) {
+      return;
+    }
 
-  private static @VideoFrameProcessor.InputType int getInputType(String sampleMimeType) {
-    if (MimeTypes.isImage(sampleMimeType)) {
-      return INPUT_TYPE_BITMAP;
+    if (videoFrameProcessingWrapper != null) {
+      videoFrameProcessingWrapper.release();
+      videoFrameProcessingWrapper = null;
     }
-    if (sampleMimeType.equals(MimeTypes.VIDEO_RAW)) {
-      return INPUT_TYPE_TEXTURE_ID;
-    }
-    if (MimeTypes.isVideo(sampleMimeType)) {
-      return INPUT_TYPE_SURFACE;
-    }
-    throw new IllegalArgumentException("MIME type not supported " + sampleMimeType);
-  }
-
-  private static Size getDecodedSize(Format format) {
-    // The decoder rotates encoded frames for display by firstInputFormat.rotationDegrees.
-    int decodedWidth = (format.rotationDegrees % 180 == 0) ? format.width : format.height;
-    int decodedHeight = (format.rotationDegrees % 180 == 0) ? format.height : format.width;
-    return new Size(decodedWidth, decodedHeight);
-  }
-
-  private static ImmutableList<Effect> createEffectListWithPresentation(
-      List<Effect> effects, @Nullable Presentation presentation) {
-    if (presentation == null) {
-      return ImmutableList.copyOf(effects);
-    }
-    ImmutableList.Builder<Effect> effectsWithPresentationBuilder = new ImmutableList.Builder<>();
-    effectsWithPresentationBuilder.addAll(effects).add(presentation);
-    return effectsWithPresentationBuilder.build();
+    released = true;
   }
 }

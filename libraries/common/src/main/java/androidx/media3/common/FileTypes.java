@@ -55,6 +55,9 @@ public final class FileTypes {
    *   <li>{@link #MIDI}
    *   <li>{@link #AVI}
    *   <li>{@link #PNG}
+   *   <li>{@link #WEBP}
+   *   <li>{@link #BMP}
+   *   <li>{@link #HEIF}
    * </ul>
    */
   @Documented
@@ -62,7 +65,7 @@ public final class FileTypes {
   @Target(TYPE_USE)
   @IntDef({
     UNKNOWN, AC3, AC4, ADTS, AMR, FLAC, FLV, MATROSKA, MP3, MP4, OGG, PS, TS, WAV, WEBVTT, JPEG,
-    MIDI, AVI, PNG
+    MIDI, AVI, PNG, WEBP, BMP, HEIF
   })
   public @interface Type {}
 
@@ -123,6 +126,15 @@ public final class FileTypes {
   /** File type for the PNG format. */
   public static final int PNG = 17;
 
+  /** File type for the WEBP format. */
+  public static final int WEBP = 18;
+
+  /** File type for the BMP format. */
+  public static final int BMP = 19;
+
+  /** File type for the HEIF format. */
+  public static final int HEIF = 20;
+
   @VisibleForTesting /* package */ static final String HEADER_CONTENT_TYPE = "Content-Type";
 
   private static final String EXTENSION_AC3 = ".ac3";
@@ -159,6 +171,10 @@ public final class FileTypes {
   private static final String EXTENSION_JPEG = ".jpeg";
   private static final String EXTENSION_AVI = ".avi";
   private static final String EXTENSION_PNG = ".png";
+  private static final String EXTENSION_WEBP = ".webp";
+  private static final String EXTENSION_BMP = ".bmp";
+  private static final String EXTENSION_DIB = ".dib";
+  private static final String EXTENSION_HEIC = ".heic";
 
   private FileTypes() {}
 
@@ -226,6 +242,12 @@ public final class FileTypes {
         return FileTypes.AVI;
       case MimeTypes.IMAGE_PNG:
         return FileTypes.PNG;
+      case MimeTypes.IMAGE_WEBP:
+        return FileTypes.WEBP;
+      case MimeTypes.IMAGE_BMP:
+        return FileTypes.BMP;
+      case MimeTypes.IMAGE_HEIF:
+        return FileTypes.HEIF;
       default:
         return FileTypes.UNKNOWN;
     }
@@ -295,6 +317,12 @@ public final class FileTypes {
       return FileTypes.AVI;
     } else if (filename.endsWith(EXTENSION_PNG)) {
       return FileTypes.PNG;
+    } else if (filename.endsWith(EXTENSION_WEBP)) {
+      return FileTypes.WEBP;
+    } else if (filename.endsWith(EXTENSION_BMP) || filename.endsWith(EXTENSION_DIB)) {
+      return FileTypes.BMP;
+    } else if (filename.endsWith(EXTENSION_HEIC)) {
+      return FileTypes.HEIF;
     } else {
       return FileTypes.UNKNOWN;
     }

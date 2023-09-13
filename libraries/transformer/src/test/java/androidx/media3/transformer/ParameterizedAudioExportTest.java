@@ -25,22 +25,21 @@ import static androidx.media3.transformer.TestUtil.createPitchChangingAudioProce
 import static androidx.media3.transformer.TestUtil.createTransformerBuilder;
 import static androidx.media3.transformer.TestUtil.removeEncodersAndDecoders;
 import static com.google.common.truth.Truth.assertThat;
+import static java.util.stream.Collectors.toList;
 
-import android.content.Context;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
-import androidx.media3.common.util.Util;
-import androidx.test.core.app.ApplicationProvider;
+import com.google.common.collect.Collections2;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.util.ArrayList;
+import com.google.common.collect.Sets;
 import java.util.List;
-import org.checkerframework.dataflow.qual.Pure;
+import java.util.Set;
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
 import org.robolectric.ParameterizedRobolectricTestRunner;
 import org.robolectric.ParameterizedRobolectricTestRunner.Parameter;
@@ -50,45 +49,84 @@ import org.robolectric.ParameterizedRobolectricTestRunner.Parameters;
 @RunWith(ParameterizedRobolectricTestRunner.class)
 public final class ParameterizedAudioExportTest {
   public static final String AUDIO_44100_MONO = ASSET_URI_PREFIX + FILE_AUDIO_RAW;
-  public static final String AUDIO_48000_STEREO = ASSET_URI_PREFIX + FILE_AUDIO_RAW_VIDEO;
-  public static final ImmutableList<ItemConfig> EDITED_MEDIA_ITEMS =
-      ImmutableList.of(
-          new ItemConfig(AUDIO_44100_MONO, /* withEffects= */ false),
-          new ItemConfig(AUDIO_44100_MONO, /* withEffects= */ true),
-          new ItemConfig(AUDIO_48000_STEREO, /* withEffects= */ false),
-          new ItemConfig(AUDIO_48000_STEREO, /* withEffects= */ true));
+  public static final String AUDIO_48000_STEREO_VIDEO = ASSET_URI_PREFIX + FILE_AUDIO_RAW_VIDEO;
 
   @Parameters(name = "{0}")
   public static List<SequenceConfig> params() {
-    ImmutableList<ImmutableList<ItemConfig>> itemsList =
-        generateAllPermutationsOfAllCombinations(EDITED_MEDIA_ITEMS);
-
-    ArrayList<SequenceConfig> sequences = new ArrayList<>();
-    for (List<ItemConfig> itemConfigs : itemsList) {
-      sequences.add(new SequenceConfig(itemConfigs));
-    }
-    return sequences;
+    return new ImmutableList.Builder<SequenceConfig>()
+        .addAll(getAllPermutationsOfAllCombinations(AUDIO_ITEMS))
+        .addAll(getAllPermutationsOfAllCombinations(AUDIO_VIDEO_ITEMS))
+        .build();
   }
 
-  private final Context context = ApplicationProvider.getApplicationContext();
+  private static List<SequenceConfig> getAllPermutationsOfAllCombinations(Set<ItemConfig> items) {
+    return Sets.powerSet(items).stream()
+        .filter(s -> !s.isEmpty())
+        .flatMap(s -> Collections2.permutations(s).stream())
+        .map(SequenceConfig::new)
+        .collect(toList());
+  }
+
+  private static final ImmutableSet<ItemConfig> AUDIO_ITEMS =
+      ImmutableSet.of(
+          new ItemConfig(
+              AUDIO_44100_MONO,
+              /* audioEffects= */ false,
+              /* withSilentAudio= */ false,
+              /* removeVideo= */ true),
+          new ItemConfig(
+              AUDIO_44100_MONO,
+              /* audioEffects= */ true,
+              /* withSilentAudio= */ false,
+              /* removeVideo= */ true),
+          new ItemConfig(
+              AUDIO_48000_STEREO_VIDEO,
+              /* audioEffects= */ false,
+              /* withSilentAudio= */ false,
+              /* removeVideo= */ true),
+          new ItemConfig(
+              AUDIO_48000_STEREO_VIDEO,
+              /* audioEffects= */ true,
+              /* withSilentAudio= */ false,
+              /* removeVideo= */ true));
+
+  private static final ImmutableSet<ItemConfig> AUDIO_VIDEO_ITEMS =
+      ImmutableSet.of(
+          new ItemConfig(
+              AUDIO_48000_STEREO_VIDEO,
+              /* audioEffects= */ false,
+              /* withSilentAudio= */ false,
+              /* removeVideo= */ false),
+          new ItemConfig(
+              AUDIO_48000_STEREO_VIDEO,
+              /* audioEffects= */ true,
+              /* withSilentAudio= */ false,
+              /* removeVideo= */ false),
+          new ItemConfig(
+              AUDIO_48000_STEREO_VIDEO,
+              /* audioEffects= */ false,
+              /* withSilentAudio= */ true,
+              /* removeVideo= */ false),
+          new ItemConfig(
+              AUDIO_48000_STEREO_VIDEO,
+              /* audioEffects= */ true,
+              /* withSilentAudio= */ true,
+              /* removeVideo= */ false));
+
+  @Rule public final TemporaryFolder outputDir = new TemporaryFolder();
 
   @Parameter public SequenceConfig sequence;
 
-  private String outputPath;
-
-  private CapturingMuxer.Factory muxerFactory;
+  private final CapturingMuxer.Factory muxerFactory = new CapturingMuxer.Factory();
 
   @Before
-  public void setUp() throws Exception {
-    outputPath = Util.createTempFile(context, "TransformerTest").getPath();
-    muxerFactory = new CapturingMuxer.Factory();
+  public void setUp() {
     addAudioDecoders(MimeTypes.AUDIO_RAW);
     addAudioEncoders(MimeTypes.AUDIO_AAC);
   }
 
   @After
-  public void tearDown() throws Exception {
-    Files.delete(Paths.get(outputPath));
+  public void tearDown() {
     removeEncodersAndDecoders();
   }
 
@@ -96,32 +134,11 @@ public final class ParameterizedAudioExportTest {
   public void export() throws Exception {
     Transformer transformer =
         createTransformerBuilder(muxerFactory, /* enableFallback= */ false).build();
-    transformer.start(sequence.asComposition(), outputPath);
+
+    transformer.start(sequence.asComposition(), outputDir.newFile().getPath());
+
     ExportResult result = TransformerTestRunner.runLooper(transformer);
-
     assertThat(result.processedInputs).hasSize(sequence.getSize());
-  }
-
-  @Pure
-  private static <T> ImmutableList<ImmutableList<T>> generateAllPermutationsOfAllCombinations(
-      List<T> items) {
-    if (items.size() == 1) {
-      return ImmutableList.of(ImmutableList.of(items.get(0)));
-    }
-
-    ImmutableList.Builder<ImmutableList<T>> permutations = new ImmutableList.Builder<>();
-    for (T mainItem : items) {
-      ArrayList<T> otherItems = new ArrayList<>(items);
-      otherItems.remove(mainItem);
-      ImmutableList<ImmutableList<T>> subLists =
-          generateAllPermutationsOfAllCombinations(otherItems);
-      for (ImmutableList<T> sublist : subLists) {
-        permutations.add(sublist);
-        permutations.add(new ImmutableList.Builder<T>().add(mainItem).addAll(sublist).build());
-      }
-    }
-
-    return ImmutableSet.copyOf(permutations.build()).asList();
   }
 
   private static class SequenceConfig {
@@ -131,16 +148,16 @@ public final class ParameterizedAudioExportTest {
       this.itemConfigs = itemConfigs;
     }
 
-    public EditedMediaItemSequence asSequence() {
+    public Composition asComposition() {
       ImmutableList.Builder<EditedMediaItem> items = new ImmutableList.Builder<>();
       for (ItemConfig itemConfig : itemConfigs) {
         items.add(itemConfig.asItem());
       }
-      return new EditedMediaItemSequence(items.build());
-    }
 
-    public Composition asComposition() {
-      return new Composition.Builder(ImmutableList.of(asSequence())).build();
+      return new Composition.Builder(new EditedMediaItemSequence(items.build()))
+          .setTransmuxVideo(true)
+          .experimentalSetForceAudioTrack(true)
+          .build();
     }
 
     public int getSize() {
@@ -161,17 +178,24 @@ public final class ParameterizedAudioExportTest {
 
   private static class ItemConfig {
     private final String uri;
-    private final boolean withEffects;
+    private final boolean audioEffects;
+    private final boolean withSilentAudio;
+    private final boolean removeVideo;
 
-    public ItemConfig(String uri, boolean withEffects) {
+    public ItemConfig(
+        String uri, boolean audioEffects, boolean withSilentAudio, boolean removeVideo) {
       this.uri = uri;
-      this.withEffects = withEffects;
+      this.audioEffects = audioEffects;
+      this.withSilentAudio = withSilentAudio;
+      this.removeVideo = removeVideo;
     }
 
     public EditedMediaItem asItem() {
       EditedMediaItem.Builder editedMediaItem =
-          new EditedMediaItem.Builder(MediaItem.fromUri(uri)).setRemoveVideo(true);
-      if (withEffects) {
+          new EditedMediaItem.Builder(MediaItem.fromUri(uri))
+              .setRemoveAudio(withSilentAudio)
+              .setRemoveVideo(removeVideo);
+      if (audioEffects) {
         editedMediaItem.setEffects(
             new Effects(
                 ImmutableList.of(createPitchChangingAudioProcessor(0.6f)), ImmutableList.of()));
@@ -182,14 +206,20 @@ public final class ParameterizedAudioExportTest {
 
     @Override
     public String toString() {
-      String itemName = uri;
-      if (uri.equals(AUDIO_44100_MONO)) {
-        itemName = "mono_44.1kHz";
-      } else if (uri.equals(AUDIO_48000_STEREO)) {
-        itemName = "stereo_48kHz";
+      String itemName = "audio(";
+      if (withSilentAudio) {
+        itemName += "silence";
+      } else if (uri.equals(AUDIO_44100_MONO)) {
+        itemName += "mono_44.1kHz";
+      } else if (uri.equals(AUDIO_48000_STEREO_VIDEO)) {
+        itemName += "stereo_48kHz";
+      } else {
+        throw new IllegalArgumentException();
       }
+      itemName += audioEffects ? "+effects" : "";
+      itemName += !removeVideo ? ")_video(transmux)" : ")";
 
-      return itemName + (withEffects ? "_effects" : "");
+      return itemName;
     }
   }
 }

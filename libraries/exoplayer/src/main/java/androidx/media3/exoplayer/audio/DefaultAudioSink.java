@@ -1163,9 +1163,17 @@ public final class DefaultAudioSink implements AudioSink {
       int error = bytesWrittenOrError;
 
       // Treat a write error on a previously successful offload channel as recoverable
-      // without disabling offload. Offload will be disabled when a new AudioTrack is created,
-      // if no longer supported.
-      boolean isRecoverable = isAudioTrackDeadObject(error) && writtenEncodedFrames > 0;
+      // without disabling offload. Offload will be disabled if offload channel was not successfully
+      // written to or when a new AudioTrack is created, if no longer supported.
+      boolean isRecoverable = false;
+      if (isAudioTrackDeadObject(error)) {
+        if (getWrittenFrames() > 0) {
+          isRecoverable = true;
+        } else if (isOffloadedPlayback(audioTrack)) {
+          maybeDisableOffload();
+          isRecoverable = true;
+        }
+      }
 
       WriteException e = new WriteException(error, configuration.inputFormat, isRecoverable);
       if (listener != null) {
@@ -1356,10 +1364,22 @@ public final class DefaultAudioSink implements AudioSink {
     }
   }
 
+  @RequiresApi(29)
   @Override
   public void setOffloadMode(@OffloadMode int offloadMode) {
     Assertions.checkState(Util.SDK_INT >= 29);
     this.offloadMode = offloadMode;
+  }
+
+  @RequiresApi(29)
+  @Override
+  public void setOffloadDelayPadding(int delayInFrames, int paddingInFrames) {
+    if (audioTrack != null
+        && isOffloadedPlayback(audioTrack)
+        && configuration != null
+        && configuration.enableOffloadGapless) {
+      audioTrack.setOffloadDelayPadding(delayInFrames, paddingInFrames);
+    }
   }
 
   @Override
@@ -1668,7 +1688,7 @@ public final class DefaultAudioSink implements AudioSink {
 
   private long getWrittenFrames() {
     return configuration.outputMode == OUTPUT_MODE_PCM
-        ? (writtenPcmBytes / configuration.outputPcmFrameSize)
+        ? Util.ceilDivide(writtenPcmBytes, configuration.outputPcmFrameSize)
         : writtenEncodedFrames;
   }
 

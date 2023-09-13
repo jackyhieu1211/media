@@ -45,6 +45,7 @@ import androidx.media3.common.util.Log;
 import androidx.media3.common.util.MediaFormatUtil;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.common.util.Util;
+import androidx.media3.decoder.DecoderInputBuffer;
 import androidx.media3.exoplayer.DecoderReuseEvaluation;
 import androidx.media3.exoplayer.DecoderReuseEvaluation.DecoderDiscardReasons;
 import androidx.media3.exoplayer.ExoPlaybackException;
@@ -64,7 +65,9 @@ import androidx.media3.exoplayer.mediacodec.MediaCodecUtil;
 import androidx.media3.exoplayer.mediacodec.MediaCodecUtil.DecoderQueryException;
 import com.google.common.collect.ImmutableList;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Decodes and renders audio using {@link MediaCodec} and an {@link AudioSink}.
@@ -409,8 +412,7 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
       boolean requiresSecureDecoder,
       AudioSink audioSink)
       throws DecoderQueryException {
-    @Nullable String mimeType = format.sampleMimeType;
-    if (mimeType == null) {
+    if (format.sampleMimeType == null) {
       return ImmutableList.of();
     }
     if (audioSink.supportsFormat(format)) {
@@ -526,7 +528,8 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
   @Nullable
   protected DecoderReuseEvaluation onInputFormatChanged(FormatHolder formatHolder)
       throws ExoPlaybackException {
-    inputFormat = checkNotNull(formatHolder.format);
+    Format inputFormat = checkNotNull(formatHolder.format);
+    this.inputFormat = inputFormat;
     @Nullable DecoderReuseEvaluation evaluation = super.onInputFormatChanged(formatHolder);
     eventDispatcher.inputFormatChanged(inputFormat, evaluation);
     return evaluation;
@@ -542,6 +545,7 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
     } else if (getCodec() == null) { // Direct playback with codec bypass.
       audioSinkInputFormat = format;
     } else {
+      checkNotNull(mediaFormat);
       @C.PcmEncoding int pcmEncoding;
       if (MimeTypes.AUDIO_RAW.equals(format.sampleMimeType)) {
         // For PCM streams, the encoder passes through int samples despite set to float mode.
@@ -561,6 +565,12 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
               .setPcmEncoding(pcmEncoding)
               .setEncoderDelay(format.encoderDelay)
               .setEncoderPadding(format.encoderPadding)
+              .setMetadata(format.metadata)
+              .setId(format.id)
+              .setLabel(format.label)
+              .setLanguage(format.language)
+              .setSelectionFlags(format.selectionFlags)
+              .setRoleFlags(format.roleFlags)
               .setChannelCount(mediaFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT))
               .setSampleRate(mediaFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE))
               .build();
@@ -744,7 +754,13 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
           e, inputFormat, e.isRecoverable, PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED);
     } catch (WriteException e) {
       throw createRendererException(
-          e, format, e.isRecoverable, PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED);
+          e,
+          format,
+          e.isRecoverable,
+          isBypassEnabled()
+                  && getConfiguration().offloadModePreferred != AudioSink.OFFLOAD_MODE_DISABLED
+              ? PlaybackException.ERROR_CODE_AUDIO_TRACK_OFFLOAD_WRITE_FAILED
+              : PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED);
     }
 
     if (fullyConsumed) {
@@ -764,7 +780,12 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
       audioSink.playToEndOfStream();
     } catch (AudioSink.WriteException e) {
       throw createRendererException(
-          e, e.format, e.isRecoverable, PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED);
+          e,
+          e.format,
+          e.isRecoverable,
+          isBypassEnabled()
+              ? PlaybackException.ERROR_CODE_AUDIO_TRACK_OFFLOAD_WRITE_FAILED
+              : PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED);
     }
   }
 
@@ -778,15 +799,15 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
       throws ExoPlaybackException {
     switch (messageType) {
       case MSG_SET_VOLUME:
-        audioSink.setVolume((Float) message);
+        audioSink.setVolume((Float) checkNotNull(message));
         break;
       case MSG_SET_AUDIO_ATTRIBUTES:
         AudioAttributes audioAttributes = (AudioAttributes) message;
-        audioSink.setAudioAttributes(audioAttributes);
+        audioSink.setAudioAttributes(checkNotNull(audioAttributes));
         break;
       case MSG_SET_AUX_EFFECT_INFO:
         AuxEffectInfo auxEffectInfo = (AuxEffectInfo) message;
-        audioSink.setAuxEffectInfo(auxEffectInfo);
+        audioSink.setAuxEffectInfo(checkNotNull(auxEffectInfo));
         break;
       case MSG_SET_PREFERRED_AUDIO_DEVICE:
         if (Util.SDK_INT >= 23) {
@@ -794,10 +815,10 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
         }
         break;
       case MSG_SET_SKIP_SILENCE_ENABLED:
-        audioSink.setSkipSilenceEnabled((Boolean) message);
+        audioSink.setSkipSilenceEnabled((Boolean) checkNotNull(message));
         break;
       case MSG_SET_AUDIO_SESSION_ID:
-        audioSink.setAudioSessionId((Integer) message);
+        audioSink.setAudioSessionId((Integer) checkNotNull(message));
         break;
       case MSG_SET_WAKEUP_LISTENER:
         this.wakeupListener = (WakeupListener) message;
@@ -810,6 +831,22 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
       default:
         super.handleMessage(messageType, message);
         break;
+    }
+  }
+
+  @Override
+  protected void handleInputBufferSupplementalData(DecoderInputBuffer buffer) {
+    if (Util.SDK_INT >= 29
+        && buffer.format != null
+        && Objects.equals(buffer.format.sampleMimeType, MimeTypes.AUDIO_OPUS)
+        && isBypassEnabled()) {
+      ByteBuffer data = checkNotNull(buffer.supplementalData);
+      int preSkip = checkNotNull(buffer.format).encoderDelay;
+      if (data.remaining() == 8) {
+        int discardSamples =
+            (int) ((data.order(ByteOrder.LITTLE_ENDIAN).getLong() * 48_000L) / C.NANOS_PER_SECOND);
+        audioSink.setOffloadDelayPadding(preSkip, discardSamples);
+      }
     }
   }
 

@@ -17,6 +17,7 @@ package androidx.media3.effect;
 
 import static androidx.media3.common.util.Assertions.checkNotNull;
 import static androidx.media3.test.utils.BitmapPixelTestUtil.readBitmap;
+import static androidx.media3.test.utils.VideoFrameProcessorTestRunner.createTimestampIterator;
 import static com.google.common.truth.Truth.assertThat;
 
 import android.graphics.Bitmap;
@@ -167,32 +168,6 @@ public class DefaultVideoFrameProcessorImageFrameOutputTest {
 
   @Test
   @RequiresNonNull({"framesProduced", "testId"})
-  public void
-      imageInput_queueEndAndQueueAgain_outputsFirstSetOfFramesOnlyAtTheCorrectPresentationTimesUs()
-          throws Exception {
-    Queue<Long> actualPresentationTimesUs = new ConcurrentLinkedQueue<>();
-    videoFrameProcessorTestRunner =
-        getDefaultFrameProcessorTestRunnerBuilder(testId)
-            .setOnOutputFrameAvailableForRenderingListener(actualPresentationTimesUs::add)
-            .build();
-
-    videoFrameProcessorTestRunner.queueInputBitmap(
-        readBitmap(ORIGINAL_PNG_ASSET_PATH),
-        /* durationUs= */ C.MICROS_PER_SECOND,
-        /* offsetToAddUs= */ 0L,
-        /* frameRate= */ 2);
-    videoFrameProcessorTestRunner.endFrameProcessing();
-    videoFrameProcessorTestRunner.queueInputBitmap(
-        readBitmap(ORIGINAL_PNG_ASSET_PATH),
-        /* durationUs= */ 2 * C.MICROS_PER_SECOND,
-        /* offsetToAddUs= */ 0L,
-        /* frameRate= */ 3);
-
-    assertThat(actualPresentationTimesUs).containsExactly(0L, C.MICROS_PER_SECOND / 2).inOrder();
-  }
-
-  @Test
-  @RequiresNonNull({"framesProduced", "testId"})
   public void queueBitmapsWithTimestamps_outputsFramesAtTheCorrectPresentationTimesUs()
       throws Exception {
     Queue<Long> actualPresentationTimesUs = new ConcurrentLinkedQueue<>();
@@ -209,8 +184,8 @@ public class DefaultVideoFrameProcessorImageFrameOutputTest {
     videoFrameProcessorTestRunner.queueInputBitmaps(
         bitmap1.getWidth(),
         bitmap1.getHeight(),
-        Pair.create(bitmap1, ImmutableList.of(offset1).iterator()),
-        Pair.create(bitmap2, ImmutableList.of(offset2, offset3).iterator()));
+        Pair.create(bitmap1, createTimestampIterator(ImmutableList.of(offset1))),
+        Pair.create(bitmap2, createTimestampIterator(ImmutableList.of(offset2, offset3))));
     videoFrameProcessorTestRunner.endFrameProcessing();
 
     assertThat(actualPresentationTimesUs).containsExactly(offset1, offset2, offset3).inOrder();

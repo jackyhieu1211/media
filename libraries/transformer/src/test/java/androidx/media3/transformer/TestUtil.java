@@ -19,6 +19,8 @@ import android.content.Context;
 import android.media.MediaFormat;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.audio.AudioProcessor;
+import androidx.media3.common.audio.ChannelMixingAudioProcessor;
+import androidx.media3.common.audio.ChannelMixingMatrix;
 import androidx.media3.common.audio.SonicAudioProcessor;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.common.util.Util;
@@ -78,8 +80,25 @@ public final class TestUtil {
     return sonicAudioProcessor;
   }
 
-  public static String getDumpFileName(String originalFileName) {
-    return DUMP_FILE_OUTPUT_DIRECTORY + '/' + originalFileName + '.' + DUMP_FILE_EXTENSION;
+  public static ChannelMixingAudioProcessor createVolumeScalingAudioProcessor(float scale) {
+    ChannelMixingAudioProcessor audioProcessor = new ChannelMixingAudioProcessor();
+    for (int channel = 1; channel <= 6; channel++) {
+      audioProcessor.putChannelMixingMatrix(
+          ChannelMixingMatrix.create(
+                  /* inputChannelCount= */ channel, /* outputChannelCount= */ channel)
+              .scaleBy(scale));
+    }
+    return audioProcessor;
+  }
+
+  public static String getDumpFileName(String originalFileName, String... modifications) {
+    String fileName = DUMP_FILE_OUTPUT_DIRECTORY + '/' + originalFileName + '/';
+    if (modifications.length == 0) {
+      fileName += "original";
+    } else {
+      fileName += String.join("_", modifications);
+    }
+    return fileName + '.' + DUMP_FILE_EXTENSION;
   }
 
   /**

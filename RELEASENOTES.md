@@ -3,20 +3,59 @@
 ### Unreleased changes
 
 *   Common Library:
+    *   Upgrade `androidx.annotation:annotation-experimental` to `1.3.1`. This
+        also introduces a transitive dependency on the Kotlin standard library
+        from `media3-common`. Apps can
+        [downgrade to remove this dependency if they want](https://developer.android.com/guide/topics/media/exoplayer/shrinking#remove-kotlin-dep).
+        Fixes https://issuetracker.google.com/251172715.
 *   ExoPlayer:
+    *   Add additional fields to Common Media Client Data (CMCD) logging: next
+        object request (`nor`) and next range request (`nrr`)
+        ([#8699](https://github.com/google/ExoPlayer/issues/8699)).
+    *   Add functionality to transmit Common Media Client Data (CMCD) data using
+        query parameters ([#553](https://github.com/androidx/media/issues/553)).
+    *   Fix `ConcurrentModificationException` in `ExperimentalBandwidthMeter`
+        ([#612](https://github.com/androidx/media/issues/612)).
+    *   Add `MediaPeriodId` parameter to
+        `CompositeMediaSource.getMediaTimeForChildMediaTime`.
+    *   Support `ClippingMediaSource` (and other sources with period/window time
+        offsets) in `ConcatenatingMediaSource2`
+        ([#11226](https://github.com/google/ExoPlayer/issues/11226)).
+    *   Change `BaseRenderer.onStreamChanged()` to also receive a
+        `MediaPeriodId` argument.
 *   Transformer:
+    *   Changed `frameRate` and `durationUs` parameters of
+        `SampleConsumer.queueInputBitmap` to `TimestampIterator`.
 *   Track Selection:
 *   Extractors:
+    *   Add `BmpExtractor`.
+    *   Add `WebpExtractor`.
+    *   Add `media3.extractor.heif.HeifExtractor`.
 *   Audio:
-*   Audio Offload:
+    *   Add support for Opus gapless metadata during offload playback.
+    *   Allow renderer recovery by disabling offload if failed at first write
+        ([#627](https://github.com/androidx/media/issues/627)).
 *   Video:
 *   Text:
 *   Metadata:
 *   DRM:
 *   Effect:
+    *   Changed `frameRate` and `durationUs` parameters of
+        `VideoFrameProcessor.queueInputBitmap` to `TimestampIterator`.
 *   Muxers:
 *   IMA extension:
+    *   Fix bug where a multi-period DASH live stream that is not the first item
+        in a playlist can throw an exception
+        ([#571](https://github.com/androidx/media/issues/571)).
+    *   Release StreamManager before calling `AdsLoader.destroy()`
 *   Session:
+    *   Set the notifications foreground service behavior to
+        `FOREGROUND_SERVICE_IMMEDIATE` in `DefaultMediaNotificationProvider`
+        ([#167](https://github.com/androidx/media/issues/167)).
+    *   Use only
+        `android.media.session.MediaSession.setMediaButtonBroadcastReceiver()`
+        above API 31 to avoid problems with deprecated API on Samsung devices
+        ([#167](https://github.com/androidx/media/issues/167)).
 *   UI:
 *   Downloads:
 *   OkHttp Extension:
@@ -25,8 +64,16 @@
 *   HLS Extension:
 *   Smooth Streaming Extension:
 *   RTSP Extension:
+    *   Fix a race condition that could lead to `IndexOutOfBoundsException` when
+        falling back to TCP, or playback hanging in some situations.
+    *   Check state in RTSP setup when returning loading state of
+        `RtspMediaPeriod`
+        ([#577](https://github.com/androidx/media/issues/577)).
 *   Decoder Extensions (FFmpeg, VP9, AV1, etc.):
 *   MIDI extension:
+*   Leanback extension:
+    *   Fix bug where disabling a surface can cause an `ArithmeticException` in
+        Leanback code ([#617](https://github.com/androidx/media/issues/617)).
 *   Cast Extension:
 *   Test Utilities:
 *   Remove deprecated symbols:
@@ -76,7 +123,7 @@ This release includes the following changes since
         (([#33](https://github.com/androidx/media/issues/33)),([#9978](https://github.com/google/ExoPlayer/issues/9978))).
     *   Rename `MimeTypes.TEXT_EXOPLAYER_CUES` to
         `MimeTypes.APPLICATION_MEDIA3_CUES`.
-    *   Add `PngExtractor` that sends and reads a whole png file into the the
+    *   Add `PngExtractor` that sends and reads a whole PNG file into the
         `TrackOutput` as one sample.
     *   Enhance `SequenceableLoader.continueLoading(long)` method in the
         `SequenceableLoader` interface to
@@ -108,7 +155,7 @@ This release includes the following changes since
         implementation details of an `Extractor` you must first call
         `Extractor.getUnderlyingInstance`.
 *   Audio:
-    *   Add support for 24/32-bit big endian PCM in MP4 and Matroska, and parse
+    *   Add support for 24/32-bit big-endian PCM in MP4 and Matroska, and parse
         PCM encoding for `lpcm` in MP4.
     *   Add support for extracting Vorbis audio in MP4.
 *   Audio Offload:
@@ -145,6 +192,9 @@ This release includes the following changes since
 *   Effect:
     *   Add `VideoFrameProcessor.queueInputBitmap(Bitmap, Iterator<Long>)`
         queuing bitmap input by timestamp.
+    *   Change `VideoFrameProcessor.registerInputStream()` to be non-blocking.
+        Apps must implement
+        `VideoFrameProcessor.Listener#onInputStreamRegistered()`.
 *   UI:
     *   Add a `Player.Listener` implementation for Wear OS devices that handles
         playback suppression due to
@@ -162,7 +212,6 @@ This release includes the following changes since
 *   MIDI extension:
     *   Release the MIDI decoder module, which provides support for playback of
         standard MIDI files using the Jsyn library to synthesize audio.
-*   Cast Extension:
 *   Test Utilities:
     *   Make `TestExoPlayerBuilder` and `FakeClock` compatible with Espresso UI
         tests and Compose UI tests. This fixes a bug where playback advances

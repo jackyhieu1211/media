@@ -16,6 +16,8 @@
 package androidx.media3.transformer;
 
 import static androidx.media3.common.util.Assertions.checkNotNull;
+import static androidx.media3.transformer.TestUtil.ASSET_URI_PREFIX;
+import static androidx.media3.transformer.TestUtil.FILE_AUDIO_VIDEO;
 import static com.google.common.truth.Truth.assertThat;
 
 import android.content.Context;
@@ -33,31 +35,25 @@ import androidx.media3.test.utils.FakeClock;
 import androidx.media3.test.utils.FakeExtractorOutput;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
 
 /** End-to-end test for {@link Transformer} with {@link InAppMuxer}. */
 @RunWith(AndroidJUnit4.class)
 public class TransformerWithInAppMuxerEndToEndTest {
-  private static final String MP4_FILE_ASSET_DIRECTORY = "asset:///media/";
-  private static final String H264_MP4 = "mp4/sample.mp4";
   private static final String XMP_SAMPLE_DATA = "media/xmp/sample_datetime_xmp.xmp";
-  private Context context;
+
+  @Rule public final TemporaryFolder outputDir = new TemporaryFolder();
+
+  private final Context context = ApplicationProvider.getApplicationContext();
   private String outputPath;
 
   @Before
-  public void setUp() throws Exception {
-    context = ApplicationProvider.getApplicationContext();
-    outputPath = Util.createTempFile(context, "TransformerTest").getPath();
-  }
-
-  @After
-  public void tearDown() throws Exception {
-    Files.delete(Paths.get(outputPath));
+  public void setup() throws Exception {
+    outputPath = outputDir.newFile().getPath();
   }
 
   @Test
@@ -74,7 +70,7 @@ public class TransformerWithInAppMuxerEndToEndTest {
             .setClock(new FakeClock(/* isAutoAdvancing= */ true))
             .setMuxerFactory(inAppMuxerFactory)
             .build();
-    MediaItem mediaItem = MediaItem.fromUri(Uri.parse(MP4_FILE_ASSET_DIRECTORY + H264_MP4));
+    MediaItem mediaItem = MediaItem.fromUri(Uri.parse(ASSET_URI_PREFIX + FILE_AUDIO_VIDEO));
 
     transformer.start(mediaItem, outputPath);
     TransformerTestRunner.runLooper(transformer);
@@ -86,7 +82,9 @@ public class TransformerWithInAppMuxerEndToEndTest {
     DumpFileAsserts.assertOutput(
         context,
         fakeExtractorOutput,
-        TestUtil.getDumpFileName(H264_MP4 + ".with_location_metadata"));
+        TestUtil.getDumpFileName(
+            /* originalFileName= */ FILE_AUDIO_VIDEO,
+            /* modifications...= */ "with_location_metadata"));
   }
 
   @Test
@@ -101,12 +99,12 @@ public class TransformerWithInAppMuxerEndToEndTest {
             .setClock(new FakeClock(/* isAutoAdvancing= */ true))
             .setMuxerFactory(inAppMuxerFactory)
             .build();
-    MediaItem mediaItem = MediaItem.fromUri(Uri.parse(MP4_FILE_ASSET_DIRECTORY + H264_MP4));
+    MediaItem mediaItem = MediaItem.fromUri(Uri.parse(ASSET_URI_PREFIX + FILE_AUDIO_VIDEO));
 
     transformer.start(mediaItem, outputPath);
     ExportResult exportResult = TransformerTestRunner.runLooper(transformer);
 
-    // TODO(b/270956881): Use FakeExtractorOutput once it starts dumping uuid box.
+    // TODO: b/288544833 - Use FakeExtractorOutput once it starts dumping uuid box.
     assertThat(exportResult.exportException).isNull();
   }
 
@@ -129,7 +127,7 @@ public class TransformerWithInAppMuxerEndToEndTest {
             .setClock(new FakeClock(/* isAutoAdvancing= */ true))
             .setMuxerFactory(inAppMuxerFactory)
             .build();
-    MediaItem mediaItem = MediaItem.fromUri(Uri.parse(MP4_FILE_ASSET_DIRECTORY + H264_MP4));
+    MediaItem mediaItem = MediaItem.fromUri(Uri.parse(ASSET_URI_PREFIX + FILE_AUDIO_VIDEO));
 
     transformer.start(mediaItem, outputPath);
     TransformerTestRunner.runLooper(transformer);
@@ -139,7 +137,10 @@ public class TransformerWithInAppMuxerEndToEndTest {
             new Mp4Extractor(), checkNotNull(outputPath));
     // [mdta: key=com.android.capture.fps, value=60.0] in video track metadata dump.
     DumpFileAsserts.assertOutput(
-        context, fakeExtractorOutput, TestUtil.getDumpFileName(H264_MP4 + ".with_capture_fps"));
+        context,
+        fakeExtractorOutput,
+        TestUtil.getDumpFileName(
+            /* originalFileName= */ FILE_AUDIO_VIDEO, /* modifications...= */ "with_capture_fps"));
   }
 
   @Test
@@ -155,7 +156,7 @@ public class TransformerWithInAppMuxerEndToEndTest {
             .setClock(new FakeClock(/* isAutoAdvancing= */ true))
             .setMuxerFactory(inAppMuxerFactory)
             .build();
-    MediaItem mediaItem = MediaItem.fromUri(Uri.parse(MP4_FILE_ASSET_DIRECTORY + H264_MP4));
+    MediaItem mediaItem = MediaItem.fromUri(Uri.parse(ASSET_URI_PREFIX + FILE_AUDIO_VIDEO));
 
     transformer.start(mediaItem, outputPath);
     TransformerTestRunner.runLooper(transformer);
@@ -165,7 +166,11 @@ public class TransformerWithInAppMuxerEndToEndTest {
             new Mp4Extractor(), checkNotNull(outputPath));
     // [Creation time: 2_000_000_000_000] in track metadata dump.
     DumpFileAsserts.assertOutput(
-        context, fakeExtractorOutput, TestUtil.getDumpFileName(H264_MP4 + ".with_creation_time"));
+        context,
+        fakeExtractorOutput,
+        TestUtil.getDumpFileName(
+            /* originalFileName= */ FILE_AUDIO_VIDEO, /* modifications...= */
+            "with_creation_time"));
   }
 
   @Test
@@ -196,7 +201,7 @@ public class TransformerWithInAppMuxerEndToEndTest {
             .setClock(new FakeClock(/* isAutoAdvancing= */ true))
             .setMuxerFactory(inAppMuxerFactory)
             .build();
-    MediaItem mediaItem = MediaItem.fromUri(Uri.parse(MP4_FILE_ASSET_DIRECTORY + H264_MP4));
+    MediaItem mediaItem = MediaItem.fromUri(Uri.parse(ASSET_URI_PREFIX + FILE_AUDIO_VIDEO));
 
     transformer.start(mediaItem, outputPath);
     TransformerTestRunner.runLooper(transformer);
@@ -207,6 +212,10 @@ public class TransformerWithInAppMuxerEndToEndTest {
     // [mdta: key=StringKey, value=StringValue, mdta: key=FloatKey, value=600.0] in track metadata
     // dump
     DumpFileAsserts.assertOutput(
-        context, fakeExtractorOutput, TestUtil.getDumpFileName(H264_MP4 + ".with_custom_metadata"));
+        context,
+        fakeExtractorOutput,
+        TestUtil.getDumpFileName(
+            /* originalFileName= */ FILE_AUDIO_VIDEO, /* modifications...= */
+            "with_custom_metadata"));
   }
 }
