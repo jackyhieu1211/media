@@ -66,7 +66,9 @@ import android.support.v4.media.session.PlaybackStateCompat;
 import android.text.TextUtils;
 import android.view.KeyEvent;
 import android.view.ViewConfiguration;
+import androidx.annotation.DoNotInline;
 import androidx.annotation.Nullable;
+import androidx.annotation.RequiresApi;
 import androidx.core.util.ObjectsCompat;
 import androidx.media.MediaSessionManager;
 import androidx.media.MediaSessionManager.RemoteUserInfo;
@@ -85,6 +87,7 @@ import androidx.media3.common.Player.RepeatMode;
 import androidx.media3.common.Rating;
 import androidx.media3.common.Timeline;
 import androidx.media3.common.util.Log;
+import androidx.media3.common.util.NullableType;
 import androidx.media3.common.util.Util;
 import androidx.media3.session.MediaSession.ControllerCb;
 import androidx.media3.session.MediaSession.ControllerInfo;
@@ -103,7 +106,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.checkerframework.checker.initialization.qual.Initialized;
-import org.checkerframework.checker.nullness.compatqual.NullableType;
 
 // Getting the commands from MediaControllerCompat'
 /* package */ class MediaSessionLegacyStub extends MediaSessionCompat.Callback {
@@ -128,7 +130,7 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
   private final MediaSessionCompat sessionCompat;
   private final String appPackageName;
   @Nullable private final MediaButtonReceiver runtimeBroadcastReceiver;
-  private final boolean canResumePlaybackOnStart;
+  @Nullable private final ComponentName broadcastReceiverComponentName;
   @Nullable private VolumeProviderCompat volumeProviderCompat;
 
   private volatile long connectionTimeoutMs;
@@ -150,20 +152,24 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
         new ConnectionTimeoutHandler(
             session.getApplicationHandler().getLooper(), connectedControllersManager);
 
-    // Select a media button receiver component.
-    ComponentName receiverComponentName = queryPackageManagerForMediaButtonReceiver(context);
     // Assume an app that intentionally puts a `MediaButtonReceiver` into the manifest has
     // implemented some kind of resumption of the last recently played media item.
-    canResumePlaybackOnStart = receiverComponentName != null;
+    broadcastReceiverComponentName = queryPackageManagerForMediaButtonReceiver(context);
+    @Nullable ComponentName receiverComponentName = broadcastReceiverComponentName;
     boolean isReceiverComponentAService = false;
-    if (receiverComponentName == null) {
+    if (receiverComponentName == null || Util.SDK_INT < 31) {
+      // Below API 26, media button events are sent to the receiver at runtime also. We always want
+      // these to arrive at the service at runtime. release() then set the receiver for restart if
+      // available.
       receiverComponentName =
           getServiceComponentByAction(context, MediaLibraryService.SERVICE_INTERFACE);
       if (receiverComponentName == null) {
         receiverComponentName =
             getServiceComponentByAction(context, MediaSessionService.SERVICE_INTERFACE);
       }
-      isReceiverComponentAService = receiverComponentName != null;
+      isReceiverComponentAService =
+          receiverComponentName != null
+              && !Objects.equals(receiverComponentName, broadcastReceiverComponentName);
     }
     Intent intent = new Intent(Intent.ACTION_MEDIA_BUTTON, sessionUri);
     PendingIntent mediaButtonIntent;
@@ -179,17 +185,17 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
       mediaButtonIntent =
           PendingIntent.getBroadcast(
               context, /* requestCode= */ 0, intent, PENDING_INTENT_FLAG_MUTABLE);
-      // Creates a fake ComponentName for MediaSessionCompat in pre-L.
+      // Creates a fake ComponentName for MediaSessionCompat in pre-L or without a service.
       receiverComponentName = new ComponentName(context, context.getClass());
     } else {
       intent.setComponent(receiverComponentName);
       mediaButtonIntent =
           isReceiverComponentAService
               ? (Util.SDK_INT >= 26
-                  ? PendingIntent.getForegroundService(
-                      context, /* requestCode= */ 0, intent, PENDING_INTENT_FLAG_MUTABLE)
-                  : PendingIntent.getService(
-                      context, /* requestCode= */ 0, intent, PENDING_INTENT_FLAG_MUTABLE))
+              ? PendingIntent.getForegroundService(
+              context, /* requestCode= */ 0, intent, PENDING_INTENT_FLAG_MUTABLE)
+              : PendingIntent.getService(
+                  context, /* requestCode= */ 0, intent, PENDING_INTENT_FLAG_MUTABLE))
               : PendingIntent.getBroadcast(
                   context, /* requestCode= */ 0, intent, PENDING_INTENT_FLAG_MUTABLE);
       runtimeBroadcastReceiver = null;
@@ -203,9 +209,12 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
         new MediaSessionCompat(
             context,
             sessionCompatId,
-            receiverComponentName,
-            mediaButtonIntent,
+            Util.SDK_INT < 31 ? receiverComponentName : null,
+            Util.SDK_INT < 31 ? mediaButtonIntent : null,
             session.getToken().getExtras());
+    if (Util.SDK_INT >= 31 && broadcastReceiverComponentName != null) {
+      Api31.setMediaButtonBroadcastReceiver(sessionCompat, broadcastReceiverComponentName);
+    }
 
     @Nullable PendingIntent sessionActivity = session.getSessionActivity();
     if (sessionActivity != null) {
@@ -244,9 +253,24 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
     sessionCompat.setActive(true);
   }
 
+  @SuppressWarnings("PendingIntentMutability") // We can't use SaferPendingIntent.
   public void release() {
-    if (!canResumePlaybackOnStart) {
-      setMediaButtonReceiver(sessionCompat, /* mediaButtonReceiverIntent= */ null);
+    if (Util.SDK_INT < 31) {
+      if (broadcastReceiverComponentName == null) {
+        // No broadcast receiver available. Playback resumption not supported.
+        setMediaButtonReceiver(sessionCompat, /* mediaButtonReceiverIntent= */ null);
+      } else {
+        // Override the runtime receiver with the broadcast receiver for playback resumption.
+        Intent intent = new Intent(Intent.ACTION_MEDIA_BUTTON, sessionImpl.getUri());
+        intent.setComponent(broadcastReceiverComponentName);
+        PendingIntent mediaButtonReceiverIntent =
+            PendingIntent.getBroadcast(
+                sessionImpl.getContext(),
+                /* requestCode= */ 0,
+                intent,
+                PENDING_INTENT_FLAG_MUTABLE);
+        setMediaButtonReceiver(sessionCompat, mediaButtonReceiverIntent);
+      }
     }
     if (runtimeBroadcastReceiver != null) {
       sessionImpl.getContext().unregisterReceiver(runtimeBroadcastReceiver);
@@ -346,7 +370,9 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
     mediaPlayPauseKeyHandler.clearPendingMediaPlayPauseKey();
     dispatchSessionTaskWithPlayerCommand(
         COMMAND_PLAY_PAUSE,
-        controller -> Util.handlePlayPauseButtonAction(sessionImpl.getPlayerWrapper()),
+        controller ->
+            Util.handlePlayPauseButtonAction(
+                sessionImpl.getPlayerWrapper(), sessionImpl.shouldPlayIfSuppressed()),
         remoteUserInfo);
   }
 
@@ -631,7 +657,7 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
   }
 
   /* package */ boolean canResumePlaybackOnStart() {
-    return canResumePlaybackOnStart;
+    return broadcastReceiverComponentName != null;
   }
 
   private void dispatchSessionTaskWithPlayerCommand(
@@ -1015,13 +1041,13 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
       MediaMetadata newPlaylistMetadata = newPlayerWrapper.getPlaylistMetadataWithCommandCheck();
       if (oldPlayerWrapper == null
           || !Util.areEqual(
-              oldPlayerWrapper.getPlaylistMetadataWithCommandCheck(), newPlaylistMetadata)) {
+          oldPlayerWrapper.getPlaylistMetadataWithCommandCheck(), newPlaylistMetadata)) {
         onPlaylistMetadataChanged(seq, newPlaylistMetadata);
       }
       MediaMetadata newMediaMetadata = newPlayerWrapper.getMediaMetadataWithCommandCheck();
       if (oldPlayerWrapper == null
           || !Util.areEqual(
-              oldPlayerWrapper.getMediaMetadataWithCommandCheck(), newMediaMetadata)) {
+          oldPlayerWrapper.getMediaMetadataWithCommandCheck(), newMediaMetadata)) {
         onMediaMetadataChanged(seq, newMediaMetadata);
       }
       if (oldPlayerWrapper == null
@@ -1457,7 +1483,6 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
     return new ComponentName(resolveInfo.serviceInfo.packageName, resolveInfo.serviceInfo.name);
   }
 
-  // TODO(b/193193462): Replace this with androidx.media.session.MediaButtonReceiver
   private final class MediaButtonReceiver extends BroadcastReceiver {
 
     @Override
@@ -1474,6 +1499,16 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
         return;
       }
       getSessionCompat().getController().dispatchMediaButtonEvent(keyEvent);
+    }
+  }
+
+  @RequiresApi(31)
+  private static final class Api31 {
+    @DoNotInline
+    public static void setMediaButtonBroadcastReceiver(
+        MediaSessionCompat mediaSessionCompat, ComponentName broadcastReceiver) {
+      ((android.media.session.MediaSession) mediaSessionCompat.getMediaSession())
+          .setMediaButtonBroadcastReceiver(broadcastReceiver);
     }
   }
 }
