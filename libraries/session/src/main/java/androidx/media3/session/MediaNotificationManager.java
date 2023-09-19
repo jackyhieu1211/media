@@ -230,12 +230,15 @@ import java.util.concurrent.TimeoutException;
         return;
       }
     }
-    if (!removeNotifications) {
-      if (Util.SDK_INT < 31) {
-        stopForeground(false);
+    if (Util.SDK_INT < 31) {
+      stopForeground(removeNotifications);
+      if (removeNotifications && mediaNotification != null) {
+        notificationManagerCompat.cancel(mediaNotification.notificationId);
+        // Update the notification count so that if a pending notification callback arrives (e.g., a
+        // bitmap is loaded), we don't show the notification.
+        totalNotificationCount++;
+        mediaNotification = null;
       }
-    } else {
-      stopForeground(true);
     }
     if (removeNotifications && mediaNotification != null) {
       notificationManagerCompat.cancel(mediaNotification.notificationId);
