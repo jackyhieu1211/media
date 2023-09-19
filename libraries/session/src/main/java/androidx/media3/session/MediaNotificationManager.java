@@ -67,7 +67,8 @@ import java.util.concurrent.TimeoutException;
   private final Map<MediaSession, ImmutableList<CommandButton>> customLayoutMap;
 
   private int totalNotificationCount;
-  @Nullable private MediaNotification mediaNotification;
+  @Nullable
+  private MediaNotification mediaNotification;
   private boolean startedInForeground;
 
   public MediaNotificationManager(
@@ -106,9 +107,9 @@ import java.util.concurrent.TimeoutException;
             listener.onConnected(shouldShowNotification(session));
             controller.addListener(listener);
           } catch (CancellationException
-              | ExecutionException
-              | InterruptedException
-              | TimeoutException e) {
+                   | ExecutionException
+                   | InterruptedException
+                   | TimeoutException e) {
             // MediaSession or MediaController is released too early. Stop monitoring the session.
             mediaSessionService.removeSession(session);
           }
@@ -143,7 +144,7 @@ import java.util.concurrent.TimeoutException;
   /**
    * Updates the notification.
    *
-   * @param session A session that needs notification update.
+   * @param session                   A session that needs notification update.
    * @param startInForegroundRequired Whether the service is required to start in the foreground.
    */
   public void updateNotification(MediaSession session, boolean startInForegroundRequired) {
@@ -181,7 +182,7 @@ import java.util.concurrent.TimeoutException;
     return controller != null
         && (controller.getPlayWhenReady() || startInForegroundWhenPaused)
         && (controller.getPlaybackState() == Player.STATE_READY
-            || controller.getPlaybackState() == Player.STATE_BUFFERING);
+        || controller.getPlaybackState() == Player.STATE_BUFFERING);
   }
 
   private void onNotificationUpdated(
@@ -221,7 +222,7 @@ import java.util.concurrent.TimeoutException;
    * Stops the service from the foreground, if no player is actively playing content.
    *
    * @param removeNotifications Whether to remove notifications, if the service is stopped from the
-   *     foreground.
+   *                            foreground.
    */
   private void maybeStopForegroundService(boolean removeNotifications) {
     List<MediaSession> sessions = mediaSessionService.getSessions();
@@ -294,6 +295,7 @@ import java.util.concurrent.TimeoutException;
 
   private static final class MediaControllerListener
       implements MediaController.Listener, Player.Listener {
+
     private final MediaSessionService mediaSessionService;
     private final MediaSession session;
     private final Map<MediaSession, ImmutableList<CommandButton>> customLayoutMap;
@@ -361,13 +363,22 @@ import java.util.concurrent.TimeoutException;
     // To hide the notification on all API levels, we need to call both Service.stopForeground(true)
     // and notificationManagerCompat.cancel(notificationId).
     if (Util.SDK_INT >= 24) {
-      Api24.stopForeground(mediaSessionService, removeNotifications);
+      if (Util.SDK_INT < 31) {
+        mediaSessionService.stopForeground(
+            removeNotifications ? STOP_FOREGROUND_REMOVE : STOP_FOREGROUND_DETACH);
+        startedInForeground = false;
+      } else {
+        if (removeNotifications) {
+          mediaSessionService.stopForeground(STOP_FOREGROUND_REMOVE);
+          startedInForeground = false;
+        }
+      }
     } else {
       // For pre-L devices, we must call Service.stopForeground(true) anyway as a workaround
       // that prevents the media notification from being undismissable.
       mediaSessionService.stopForeground(removeNotifications || Util.SDK_INT < 21);
+      startedInForeground = false;
     }
-    startedInForeground = false;
   }
 
   @RequiresApi(24)
@@ -375,10 +386,18 @@ import java.util.concurrent.TimeoutException;
 
     @DoNotInline
     public static void stopForeground(MediaSessionService service, boolean removeNotification) {
-      service.stopForeground(removeNotification ? STOP_FOREGROUND_REMOVE : STOP_FOREGROUND_DETACH);
+      if (Util.SDK_INT < 31) {
+        service.stopForeground(
+            removeNotification ? STOP_FOREGROUND_REMOVE : STOP_FOREGROUND_DETACH);
+      } else {
+        if (removeNotification) {
+          service.stopForeground(STOP_FOREGROUND_REMOVE);
+        }
+      }
     }
 
-    private Api24() {}
+    private Api24() {
+    }
   }
 
   @RequiresApi(29)
@@ -403,6 +422,7 @@ import java.util.concurrent.TimeoutException;
       }
     }
 
-    private Api29() {}
+    private Api29() {
+    }
   }
 }
