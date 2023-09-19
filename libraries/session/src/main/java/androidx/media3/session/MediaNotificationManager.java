@@ -240,13 +240,6 @@ import java.util.concurrent.TimeoutException;
         mediaNotification = null;
       }
     }
-    if (removeNotifications && mediaNotification != null) {
-      notificationManagerCompat.cancel(mediaNotification.notificationId);
-      // Update the notification count so that if a pending notification callback arrives (e.g., a
-      // bitmap is loaded), we don't show the notification.
-      totalNotificationCount++;
-      mediaNotification = null;
-    }
   }
 
   private boolean shouldShowNotification(MediaSession session) {
