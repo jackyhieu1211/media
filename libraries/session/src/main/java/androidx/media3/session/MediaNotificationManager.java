@@ -230,7 +230,13 @@ import java.util.concurrent.TimeoutException;
         return;
       }
     }
-    stopForeground(removeNotifications);
+    if (!removeNotifications) {
+      if (Util.SDK_INT < 31) {
+        stopForeground(false);
+      }
+    } else {
+      stopForeground(true);
+    }
     if (removeNotifications && mediaNotification != null) {
       notificationManagerCompat.cancel(mediaNotification.notificationId);
       // Update the notification count so that if a pending notification callback arrives (e.g., a
